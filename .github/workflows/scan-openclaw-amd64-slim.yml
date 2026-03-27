@@ -22,7 +22,7 @@ jobs:
         run: echo "Scanning ${{ inputs.image_ref }}" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Run Trivy table scan
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.35.0
         with:
           image-ref: ${{ inputs.image_ref }}
           format: table
@@ -33,7 +33,7 @@ jobs:
           exit-code: 0
 
       - name: Run Trivy SARIF scan
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.35.0
         with:
           image-ref: ${{ inputs.image_ref }}
           format: sarif
