@@ -1,4 +1,4 @@
-name: Build OpenClaw AMD64 Mini
+name: Build OpenClaw ARM64 Mini
 
 on:
   workflow_dispatch:
@@ -16,11 +16,11 @@ on:
       image_tag:
         description: Experimental mini image tag
         required: true
-        default: 2026.3.24-mini-amd64-r2
+        default: 2026.3.24-mini-arm64
         type: string
 
 concurrency:
-  group: build-openclaw-amd64-mini-${{ inputs.image_name }}-${{ inputs.image_tag }}
+  group: build-openclaw-arm64-mini-${{ inputs.image_name }}-${{ inputs.image_tag }}
   cancel-in-progress: false
 
 permissions:
@@ -33,7 +33,7 @@ env:
 
 jobs:
   build:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-24.04-arm
     steps:
       - name: Checkout upstream OpenClaw
         uses: actions/checkout@v4
@@ -42,10 +42,10 @@ jobs:
           ref: ${{ inputs.ref }}
           fetch-depth: 1
 
-      - name: Generate experimental mini Dockerfile
+      - name: Generate experimental arm64 mini Dockerfile
         shell: bash
         run: |
-          cat > Dockerfile.mini <<'EOF'
+          cat > Dockerfile.arm64-mini <<'EOF'
           ARG OPENCLAW_NODE_BOOKWORM_IMAGE=node:24-bookworm
           ARG OPENCLAW_NODE_BOOKWORM_SLIM_IMAGE=node:24-bookworm-slim
 
@@ -64,7 +64,7 @@ jobs:
           COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
           COPY ui/package.json ./ui/package.json
           COPY patches ./patches
-          RUN --mount=type=cache,id=openclaw-pnpm-store-mini,target=/root/.local/share/pnpm/store,sharing=locked \
+          RUN --mount=type=cache,id=openclaw-pnpm-store-arm64-mini,target=/root/.local/share/pnpm/store,sharing=locked \
               NODE_OPTIONS=--max-old-space-size=2048 pnpm install --frozen-lockfile
           COPY . .
           RUN for dir in /app/extensions /app/.agent /app/.agents; do \
@@ -89,10 +89,10 @@ jobs:
 
           FROM ${OPENCLAW_NODE_BOOKWORM_SLIM_IMAGE}
           WORKDIR /app
-          RUN --mount=type=cache,id=openclaw-mini-apt-cache,target=/var/cache/apt,sharing=locked \
-              --mount=type=cache,id=openclaw-mini-apt-lists,target=/var/lib/apt,sharing=locked \
+          RUN --mount=type=cache,id=openclaw-arm64-mini-apt-cache,target=/var/cache/apt,sharing=locked \
+              --mount=type=cache,id=openclaw-arm64-mini-apt-lists,target=/var/lib/apt,sharing=locked \
               apt-get update && \
-              DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates && \
+              DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates openssl && \
               rm -rf /var/lib/apt/lists/*
           RUN chown node:node /app
           COPY --from=build --chown=node:node /app/dist ./dist
@@ -136,24 +136,24 @@ jobs:
             echo "revision=$(git rev-parse HEAD)"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Build and push mini amd64 image
+      - name: Build and push mini arm64 image
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: ./Dockerfile.mini
-          platforms: linux/amd64
+          file: ./Dockerfile.arm64-mini
+          platforms: linux/arm64
           push: true
           provenance: false
-          cache-from: type=gha,scope=openclaw-amd64-mini
-          cache-to: type=gha,mode=max,scope=openclaw-amd64-mini
+          cache-from: type=gha,scope=openclaw-arm64-mini
+          cache-to: type=gha,mode=max,scope=openclaw-arm64-mini
           tags: ${{ steps.meta.outputs.image }}:${{ inputs.image_tag }}
           labels: |
             org.opencontainers.image.source=https://github.com/openclaw/openclaw
             org.opencontainers.image.revision=${{ steps.meta.outputs.revision }}
-            org.opencontainers.image.description=Experimental reduced-footprint OpenClaw image
+            org.opencontainers.image.description=Experimental reduced-footprint OpenClaw arm64 image
 
       - name: Summary
         run: |
           echo "Mini image: ${{ steps.meta.outputs.image }}:${{ inputs.image_tag }}" >> "$GITHUB_STEP_SUMMARY"
           echo "Trade-offs: runtime removes docs, pnpm/corepack tooling, git/curl/procps/lsof/hostname packages and keeps only gateway-oriented runtime pieces." >> "$GITHUB_STEP_SUMMARY"
-          echo "This iteration additionally strips common documentation, test, map, and tsbuildinfo files from production node_modules after prune." >> "$GITHUB_STEP_SUMMARY"
+          echo "This arm64 experiment additionally strips common documentation, test, map, and tsbuildinfo files from production node_modules after prune." >> "$GITHUB_STEP_SUMMARY"

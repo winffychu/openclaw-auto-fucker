@@ -16,7 +16,7 @@ on:
       image_tag:
         description: Experimental image tag, for example 2026.3.24-alpine-amd64
         required: true
-        default: 2026.3.24-alpine-amd64
+        default: 2026.3.24-alpine-amd64-r2
         type: string
 
 concurrency:
@@ -46,18 +46,27 @@ jobs:
         shell: bash
         run: |
           cat > Dockerfile.alpine-experimental <<'EOF'
-          ARG GLIBC_VERSION=2.39-r0
+          ARG GLIBC_VERSIONS="2.39-r0 2.38-r1 2.35-r1"
 
           FROM node:24-alpine AS build
-          ARG GLIBC_VERSION
+          ARG GLIBC_VERSIONS
           RUN set -eux; \
-              apk add --no-cache bash curl git python3 make g++ libc6-compat wget ca-certificates binutils xz; \
-              wget -q -O /etc/apk/keys/sgerrand.rsa.pub https://alpine-pkgs.sgerrand.com/sgerrand.rsa.pub; \
-              wget -q https://github.com/sgerrand/alpine-pkg-glibc/releases/download/$GLIBC_VERSION/glibc-$GLIBC_VERSION.apk; \
-              wget -q https://github.com/sgerrand/alpine-pkg-glibc/releases/download/$GLIBC_VERSION/glibc-bin-$GLIBC_VERSION.apk; \
-              apk add --no-cache --force-overwrite glibc-$GLIBC_VERSION.apk glibc-bin-$GLIBC_VERSION.apk; \
-              /usr/glibc-compat/sbin/ldconfig /lib /usr/glibc-compat/lib; \
-              rm -f glibc-$GLIBC_VERSION.apk glibc-bin-$GLIBC_VERSION.apk
+              apk add --no-cache bash curl git python3 make g++ libc6-compat ca-certificates binutils xz; \
+              curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 https://alpine-pkgs.sgerrand.com/sgerrand.rsa.pub -o /etc/apk/keys/sgerrand.rsa.pub; \
+              installed=''; \
+              for version in $GLIBC_VERSIONS; do \
+                base_url="https://github.com/sgerrand/alpine-pkg-glibc/releases/download/${version}"; \
+                rm -f /tmp/glibc.apk /tmp/glibc-bin.apk; \
+                if curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 "$base_url/glibc-${version}.apk" -o /tmp/glibc.apk && \
+                   curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 "$base_url/glibc-bin-${version}.apk" -o /tmp/glibc-bin.apk; then \
+                  apk add --no-cache --force-overwrite /tmp/glibc.apk /tmp/glibc-bin.apk; \
+                  /usr/glibc-compat/sbin/ldconfig /lib /usr/glibc-compat/lib; \
+                  installed=1; \
+                  break; \
+                fi; \
+              done; \
+              test -n "$installed"; \
+              rm -f /tmp/glibc.apk /tmp/glibc-bin.apk
           RUN corepack enable
           WORKDIR /app
           COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
@@ -72,15 +81,24 @@ jobs:
           RUN CI=true pnpm prune --prod
 
           FROM node:24-alpine
-          ARG GLIBC_VERSION
+          ARG GLIBC_VERSIONS
           RUN set -eux; \
-              apk add --no-cache bash curl git openssl procps libc6-compat wget ca-certificates binutils xz; \
-              wget -q -O /etc/apk/keys/sgerrand.rsa.pub https://alpine-pkgs.sgerrand.com/sgerrand.rsa.pub; \
-              wget -q https://github.com/sgerrand/alpine-pkg-glibc/releases/download/$GLIBC_VERSION/glibc-$GLIBC_VERSION.apk; \
-              wget -q https://github.com/sgerrand/alpine-pkg-glibc/releases/download/$GLIBC_VERSION/glibc-bin-$GLIBC_VERSION.apk; \
-              apk add --no-cache --force-overwrite glibc-$GLIBC_VERSION.apk glibc-bin-$GLIBC_VERSION.apk; \
-              /usr/glibc-compat/sbin/ldconfig /lib /usr/glibc-compat/lib; \
-              rm -f glibc-$GLIBC_VERSION.apk glibc-bin-$GLIBC_VERSION.apk
+              apk add --no-cache bash curl git openssl procps libc6-compat ca-certificates binutils xz; \
+              curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 https://alpine-pkgs.sgerrand.com/sgerrand.rsa.pub -o /etc/apk/keys/sgerrand.rsa.pub; \
+              installed=''; \
+              for version in $GLIBC_VERSIONS; do \
+                base_url="https://github.com/sgerrand/alpine-pkg-glibc/releases/download/${version}"; \
+                rm -f /tmp/glibc.apk /tmp/glibc-bin.apk; \
+                if curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 "$base_url/glibc-${version}.apk" -o /tmp/glibc.apk && \
+                   curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 "$base_url/glibc-bin-${version}.apk" -o /tmp/glibc-bin.apk; then \
+                  apk add --no-cache --force-overwrite /tmp/glibc.apk /tmp/glibc-bin.apk; \
+                  /usr/glibc-compat/sbin/ldconfig /lib /usr/glibc-compat/lib; \
+                  installed=1; \
+                  break; \
+                fi; \
+              done; \
+              test -n "$installed"; \
+              rm -f /tmp/glibc.apk /tmp/glibc-bin.apk
           WORKDIR /app
           COPY --from=build /app/dist ./dist
           COPY --from=build /app/node_modules ./node_modules
@@ -142,3 +160,4 @@ jobs:
         run: |
           echo "Experimental image: ${{ steps.meta.outputs.image }}:${{ inputs.image_tag }}" >> "$GITHUB_STEP_SUMMARY"
           echo "Warning: Alpine is experimental and may break upstream assumptions around glibc, browser tooling, native modules, or scripts." >> "$GITHUB_STEP_SUMMARY"
+          echo "This iteration retries sgerrand downloads with curl and falls back across multiple glibc release tags before failing." >> "$GITHUB_STEP_SUMMARY"
