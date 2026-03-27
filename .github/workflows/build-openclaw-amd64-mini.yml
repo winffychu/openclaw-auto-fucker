@@ -16,7 +16,7 @@ on:
       image_tag:
         description: Experimental mini image tag
         required: true
-        default: 2026.3.24-mini-amd64-r2
+        default: 2026.3.24-mini-amd64-r3
         type: string
 
 concurrency:
@@ -85,7 +85,8 @@ jobs:
           RUN CI=true pnpm prune --prod && \
               find dist -type f \( -name '*.d.ts' -o -name '*.d.mts' -o -name '*.d.cts' -o -name '*.map' \) -delete && \
               find node_modules -type f \( -iname 'README*' -o -iname 'CHANGELOG*' -o -iname 'LICENSE*' -o -iname '*.md' -o -iname '*.markdown' -o -name '*.map' -o -name '*.tsbuildinfo' \) -delete && \
-              find node_modules -type d \( -name test -o -name tests -o -name __tests__ -o -name docs -o -name .github -o -name example -o -name examples \) -prune -exec rm -rf '{}' +
+              find node_modules -type d \( -name test -o -name tests -o -name __tests__ -o -name docs -o -name .github -o -name example -o -name examples \) -prune -exec rm -rf '{}' + && \
+              find node_modules -type f \( -name '*.a' -o -name '*.o' -o -name '*.h' -o -name '*.hh' -o -name '*.hpp' -o -name '*.c' -o -name '*.cc' -o -name '*.cpp' -o -name '*.cxx' -o -name 'binding.gyp' -o -name '*.gypi' -o -name 'CMakeLists.txt' -o -name '*.cmake' \) -delete
 
           FROM ${OPENCLAW_NODE_BOOKWORM_SLIM_IMAGE}
           WORKDIR /app
@@ -157,3 +158,4 @@ jobs:
           echo "Mini image: ${{ steps.meta.outputs.image }}:${{ inputs.image_tag }}" >> "$GITHUB_STEP_SUMMARY"
           echo "Trade-offs: runtime removes docs, pnpm/corepack tooling, git/curl/procps/lsof/hostname packages and keeps only gateway-oriented runtime pieces." >> "$GITHUB_STEP_SUMMARY"
           echo "This iteration additionally strips common documentation, test, map, and tsbuildinfo files from production node_modules after prune." >> "$GITHUB_STEP_SUMMARY"
+          echo "This r3 iteration also strips common native build leftovers such as C/C++ sources, headers, static libs, object files, and gyp/cmake metadata from production node_modules." >> "$GITHUB_STEP_SUMMARY"
