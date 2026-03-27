@@ -162,4 +162,3 @@ jobs:
           echo "Warning: Alpine is experimental and may break upstream assumptions around glibc, browser tooling, native modules, or scripts." >> "$GITHUB_STEP_SUMMARY"
           echo "This iteration retries sgerrand downloads with curl and falls back across multiple glibc release tags before failing." >> "$GITHUB_STEP_SUMMARY"
           echo "This r3 experiment additionally installs linux-headers in the build stage to unblock native compilation paths that require linux/limits.h." >> "$GITHUB_STEP_SUMMARY"
-          echo "This r3 experiment additionally installs linux-headers in the build stage to unblock native compilation paths that require linux/limits.h." >> "$GITHUB_STEP_SUMMARY"
