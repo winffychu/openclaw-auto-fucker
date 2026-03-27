@@ -16,7 +16,7 @@ on:
       image_tag:
         description: Experimental mini image tag
         required: true
-        default: 2026.3.24-mini-arm64-r2
+        default: 2026.3.24-mini-arm64-r3
         type: string
 
 concurrency:
@@ -93,7 +93,7 @@ jobs:
           RUN --mount=type=cache,id=openclaw-arm64-mini-apt-cache,target=/var/cache/apt,sharing=locked \
               --mount=type=cache,id=openclaw-arm64-mini-apt-lists,target=/var/lib/apt,sharing=locked \
               apt-get update && \
-              DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates openssl && \
+              DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends binutils ca-certificates openssl && \
               rm -rf /var/lib/apt/lists/*
           RUN chown node:node /app
           COPY --from=build --chown=node:node /app/dist ./dist
@@ -104,6 +104,7 @@ jobs:
           COPY --from=build --chown=node:node /app/skills ./skills
           ENV NODE_ENV=production
           ENV OPENCLAW_BUNDLED_PLUGINS_DIR=/app/extensions
+          RUN find /app/node_modules -type f \\( -name '*.node' -o -name '*.so' \\) -exec strip --strip-unneeded {} + || true
           RUN ln -sf /app/openclaw.mjs /usr/local/bin/openclaw && chmod 755 /app/openclaw.mjs
           USER node
           HEALTHCHECK --interval=3m --timeout=10s --start-period=15s --retries=3 \
@@ -159,3 +160,4 @@ jobs:
           echo "Trade-offs: runtime removes docs, pnpm/corepack tooling, git/curl/procps/lsof/hostname packages and keeps only gateway-oriented runtime pieces." >> "$GITHUB_STEP_SUMMARY"
           echo "This arm64 experiment additionally strips common documentation, test, map, and tsbuildinfo files from production node_modules after prune." >> "$GITHUB_STEP_SUMMARY"
           echo "This r2 iteration also removes native build leftovers such as source files, static objects, CMake metadata, and cmake/src directories from production node_modules." >> "$GITHUB_STEP_SUMMARY"
+          echo "This r3 iteration additionally strips unneeded symbols from runtime native modules (*.node and *.so) only." >> "$GITHUB_STEP_SUMMARY"
