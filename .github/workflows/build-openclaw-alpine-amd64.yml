@@ -16,7 +16,7 @@ on:
       image_tag:
         description: Experimental image tag, for example 2026.3.24-alpine-amd64
         required: true
-        default: 2026.3.24-alpine-amd64-r2
+        default: 2026.3.24-alpine-amd64-r3
         type: string
 
 concurrency:
@@ -51,7 +51,7 @@ jobs:
           FROM node:24-alpine AS build
           ARG GLIBC_VERSIONS
           RUN set -eux; \
-              apk add --no-cache bash curl git python3 make g++ libc6-compat ca-certificates binutils xz; \
+              apk add --no-cache bash curl git python3 make g++ libc6-compat ca-certificates binutils xz linux-headers; \
               curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 https://alpine-pkgs.sgerrand.com/sgerrand.rsa.pub -o /etc/apk/keys/sgerrand.rsa.pub; \
               installed=''; \
               for version in $GLIBC_VERSIONS; do \
@@ -161,3 +161,5 @@ jobs:
           echo "Experimental image: ${{ steps.meta.outputs.image }}:${{ inputs.image_tag }}" >> "$GITHUB_STEP_SUMMARY"
           echo "Warning: Alpine is experimental and may break upstream assumptions around glibc, browser tooling, native modules, or scripts." >> "$GITHUB_STEP_SUMMARY"
           echo "This iteration retries sgerrand downloads with curl and falls back across multiple glibc release tags before failing." >> "$GITHUB_STEP_SUMMARY"
+          echo "This r3 experiment additionally installs linux-headers in the build stage to unblock native compilation paths that require linux/limits.h." >> "$GITHUB_STEP_SUMMARY"
+          echo "This r3 experiment additionally installs linux-headers in the build stage to unblock native compilation paths that require linux/limits.h." >> "$GITHUB_STEP_SUMMARY"
