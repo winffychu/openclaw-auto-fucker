@@ -1,0 +1,68 @@
+name: Scan OpenClaw AMD64 Slim
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_ref:
+        description: Full image reference to scan
+        required: true
+        default: ghcr.io/winffychu/openclaw:2026.3.24-slim-amd64
+        type: string
+
+permissions:
+  contents: read
+  security-events: write
+  packages: read
+
+jobs:
+  trivy:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Log target image
+        run: echo "Scanning ${{ inputs.image_ref }}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Run Trivy table scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ inputs.image_ref }}
+          format: table
+          output: trivy-report.txt
+          severity: CRITICAL,HIGH
+          vuln-type: os,library
+          ignore-unfixed: true
+          exit-code: 0
+
+      - name: Run Trivy SARIF scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ inputs.image_ref }}
+          format: sarif
+          output: trivy-results.sarif
+          severity: CRITICAL,HIGH
+          vuln-type: os,library
+          ignore-unfixed: true
+          exit-code: 0
+
+      - name: Upload SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-openclaw-amd64-slim
+          path: |
+            trivy-report.txt
+            trivy-results.sarif
+
+      - name: Append summary
+        shell: bash
+        run: |
+          {
+            echo "Target: ${{ inputs.image_ref }}"
+            echo
+            echo '```text'
+            cat trivy-report.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
