@@ -1,0 +1,166 @@
+name: Experimental OpenClaw AMD64 Slim Security R1
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref from openclaw/openclaw to build, for example main or refs/tags/v2026.3.24
+        required: true
+        default: refs/tags/v2026.3.24
+        type: string
+      image_name:
+        description: GHCR image name under winffychu namespace
+        required: true
+        default: openclaw
+        type: string
+      image_tag:
+        description: Experimental hardened slim image tag
+        required: true
+        default: 2026.3.24-slim-amd64-security-r1
+        type: string
+
+concurrency:
+  group: build-openclaw-amd64-slim-security-r1-${{ inputs.image_name }}-${{ inputs.image_tag }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  OWNER: winffychu
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout upstream OpenClaw
+        uses: actions/checkout@v4
+        with:
+          repository: openclaw/openclaw
+          ref: ${{ inputs.ref }}
+          fetch-depth: 1
+
+      - name: Generate experimental hardened slim Dockerfile
+        shell: bash
+        run: |
+          cat > Dockerfile.slim-security <<'EOF'
+          ARG OPENCLAW_NODE_BOOKWORM_IMAGE=node:24-bookworm
+          ARG OPENCLAW_NODE_BOOKWORM_SLIM_IMAGE=node:24-bookworm-slim
+
+          FROM ${OPENCLAW_NODE_BOOKWORM_IMAGE} AS build
+          RUN set -eux; \
+              for attempt in 1 2 3 4 5; do \
+                if curl --retry 5 --retry-all-errors --retry-delay 2 -fsSL https://bun.sh/install | bash; then \
+                  break; \
+                fi; \
+                if [ "$attempt" -eq 5 ]; then exit 1; fi; \
+                sleep $((attempt * 2)); \
+              done
+          ENV PATH=/root/.bun/bin:${PATH}
+          RUN corepack enable
+          WORKDIR /app
+          COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
+          COPY ui/package.json ./ui/package.json
+          COPY patches ./patches
+          RUN --mount=type=cache,id=openclaw-pnpm-store-slim-security,target=/root/.local/share/pnpm/store,sharing=locked \
+              NODE_OPTIONS=--max-old-space-size=2048 pnpm install --frozen-lockfile
+          COPY . .
+          RUN for dir in /app/extensions /app/.agent /app/.agents; do \
+                if [ -d "$dir" ]; then \
+                  find "$dir" -type d -exec chmod 755 {} +; \
+                  find "$dir" -type f -exec chmod 644 {} +; \
+                fi; \
+              done
+          RUN pnpm canvas:a2ui:bundle || \
+              (echo "A2UI bundle: creating stub (non-fatal)" && \
+               mkdir -p src/canvas-host/a2ui && \
+               echo "/* A2UI bundle unavailable in this build */" > src/canvas-host/a2ui/a2ui.bundle.js && \
+               echo "stub" > src/canvas-host/a2ui/.bundle.hash && \
+               rm -rf vendor/a2ui apps/shared/OpenClawKit/Tools/CanvasA2UI)
+          RUN pnpm build:docker
+          ENV OPENCLAW_PREFER_PNPM=1
+          RUN pnpm ui:build
+
+          FROM build AS runtime-assets
+          RUN CI=true pnpm prune --prod && \
+              find dist -type f \( -name '*.d.ts' -o -name '*.d.mts' -o -name '*.d.cts' -o -name '*.map' \) -delete
+
+          FROM ${OPENCLAW_NODE_BOOKWORM_SLIM_IMAGE}
+          WORKDIR /app
+          RUN --mount=type=cache,id=openclaw-slim-security-apt-cache,target=/var/cache/apt,sharing=locked \
+              --mount=type=cache,id=openclaw-slim-security-apt-lists,target=/var/lib/apt,sharing=locked \
+              apt-get update && \
+              DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --no-install-recommends && \
+              DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+                procps hostname curl git lsof openssl && \
+              rm -rf /var/lib/apt/lists/*
+          RUN chown node:node /app
+          COPY --from=runtime-assets --chown=node:node /app/dist ./dist
+          COPY --from=runtime-assets --chown=node:node /app/node_modules ./node_modules
+          COPY --from=runtime-assets --chown=node:node /app/package.json ./
+          COPY --from=runtime-assets --chown=node:node /app/openclaw.mjs ./
+          COPY --from=runtime-assets --chown=node:node /app/extensions ./extensions
+          COPY --from=runtime-assets --chown=node:node /app/skills ./skills
+          COPY --from=runtime-assets --chown=node:node /app/docs ./docs
+          ENV NODE_ENV=production
+          ENV OPENCLAW_BUNDLED_PLUGINS_DIR=/app/extensions
+          # Harden runtime surface: gateway startup only needs node + built assets, not npm/corepack/pnpm tooling.
+          RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack /usr/local/share/corepack && \
+              rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /usr/local/bin/pnpm /usr/local/bin/pnpx && \
+              ln -sf /app/openclaw.mjs /usr/local/bin/openclaw && chmod 755 /app/openclaw.mjs
+          RUN node --version && node openclaw.mjs --help >/dev/null
+          USER node
+          HEALTHCHECK --interval=3m --timeout=10s --start-period=15s --retries=3 \
+            CMD node -e "fetch('http://127.0.0.1:18789/healthz').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+          CMD ["node", "openclaw.mjs", "gateway", "--allow-unconfigured"]
+          EOF
+
+      - name: Show source revision
+        run: |
+          git rev-parse HEAD
+          git describe --tags --always || true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Prepare metadata
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          IMAGE="${{ env.REGISTRY }}/${{ env.OWNER }}/${{ inputs.image_name }}"
+          {
+            echo "image=${IMAGE}"
+            echo "revision=$(git rev-parse HEAD)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build and push experimental hardened slim image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.slim-security
+          platforms: linux/amd64
+          push: true
+          provenance: false
+          cache-from: type=gha,scope=openclaw-amd64-slim-security-r1
+          cache-to: type=gha,mode=max,scope=openclaw-amd64-slim-security-r1
+          tags: ${{ steps.meta.outputs.image }}:${{ inputs.image_tag }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/openclaw/openclaw
+            org.opencontainers.image.revision=${{ steps.meta.outputs.revision }}
+            org.opencontainers.image.description=Experimental hardened slim OpenClaw image
+
+      - name: Summary
+        run: |
+          echo "Experimental image: ${{ steps.meta.outputs.image }}:${{ inputs.image_tag }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "This hardened slim experiment keeps normal gateway runtime behavior but removes npm/corepack/pnpm tooling from the final image to reduce exposed supply-chain surface." >> "$GITHUB_STEP_SUMMARY"
+          echo "A build-time smoke check validates node and the OpenClaw CLI entrypoint before publish." >> "$GITHUB_STEP_SUMMARY"
