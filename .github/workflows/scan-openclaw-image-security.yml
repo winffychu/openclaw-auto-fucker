@@ -1,0 +1,124 @@
+name: Scan OpenClaw Image Security
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_ref:
+        description: Full image reference or digest to scan
+        required: true
+        default: ghcr.io/winffychu/openclaw:2026.3.24-slim-amd64
+        type: string
+      fail_on_severity:
+        description: Optional blocking severities, for example CRITICAL or leave empty
+        required: false
+        default: ""
+        type: string
+  schedule:
+    - cron: '23 3 * * *'
+
+permissions:
+  contents: read
+  security-events: write
+  packages: read
+
+jobs:
+  trivy:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Resolve target image
+        id: target
+        shell: bash
+        run: |
+          set -euo pipefail
+          IMAGE_REF="${{ inputs.image_ref }}"
+          if [ -z "$IMAGE_REF" ]; then
+            IMAGE_REF="ghcr.io/winffychu/openclaw:2026.3.24-slim-amd64"
+          fi
+          echo "image_ref=$IMAGE_REF" >> "$GITHUB_OUTPUT"
+          echo "Scanning $IMAGE_REF" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Run Trivy table scan
+        uses: aquasecurity/trivy-action@v0.35.0
+        with:
+          image-ref: ${{ steps.target.outputs.image_ref }}
+          format: table
+          output: trivy-report.txt
+          severity: CRITICAL,HIGH
+          vuln-type: os,library
+          ignore-unfixed: true
+          exit-code: 0
+
+      - name: Run Trivy JSON scan
+        uses: aquasecurity/trivy-action@v0.35.0
+        with:
+          image-ref: ${{ steps.target.outputs.image_ref }}
+          format: json
+          output: trivy-results.json
+          severity: CRITICAL,HIGH
+          vuln-type: os,library
+          ignore-unfixed: true
+          exit-code: 0
+
+      - name: Run Trivy SARIF scan
+        uses: aquasecurity/trivy-action@v0.35.0
+        with:
+          image-ref: ${{ steps.target.outputs.image_ref }}
+          format: sarif
+          output: trivy-results.sarif
+          severity: CRITICAL,HIGH
+          vuln-type: os,library
+          ignore-unfixed: true
+          exit-code: 0
+
+      - name: Upload SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-openclaw-image-security
+          path: |
+            trivy-report.txt
+            trivy-results.json
+            trivy-results.sarif
+
+      - name: Optional severity gate
+        if: ${{ inputs.fail_on_severity != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          gate = {x.strip().upper() for x in os.environ['FAIL_ON_SEVERITY'].split(',') if x.strip()}
+          data = json.loads(Path('trivy-results.json').read_text(encoding='utf-8'))
+          findings = []
+          for result in data.get('Results', []):
+              target = result.get('Target')
+              for vuln in result.get('Vulnerabilities') or []:
+                  sev = (vuln.get('Severity') or '').upper()
+                  if sev in gate:
+                      findings.append((sev, vuln.get('VulnerabilityID'), vuln.get('PkgName'), target))
+          if findings:
+              print('Blocking findings detected:')
+              for sev, vid, pkg, target in findings:
+                  print(f'{sev} {vid} {pkg} {target}')
+              raise SystemExit(1)
+          print('No blocking findings for severities:', ','.join(sorted(gate)))
+          PY
+        env:
+          FAIL_ON_SEVERITY: ${{ inputs.fail_on_severity }}
+
+      - name: Append summary
+        shell: bash
+        run: |
+          {
+            echo "Target: ${{ steps.target.outputs.image_ref }}"
+            echo
+            echo '```text'
+            cat trivy-report.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
