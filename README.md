@@ -5,6 +5,8 @@ English | [中文](#中文说明)
 This repository does not fork `openclaw/openclaw`.
 It only hosts GitHub Actions workflows that check out upstream OpenClaw at build time and publish container images to `ghcr.io/winffychu/openclaw`.
 
+License: MIT, aligned with upstream OpenClaw.
+
 ## Status
 
 Current release-candidate status is finalized for the main publish tracks.
