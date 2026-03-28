@@ -104,7 +104,7 @@ jobs:
           COPY --from=build --chown=node:node /app/skills ./skills
           ENV NODE_ENV=production
           ENV OPENCLAW_BUNDLED_PLUGINS_DIR=/app/extensions
-          RUN find /app/node_modules -type f \\( -name '*.node' -o -name '*.so' \\) -exec strip --strip-unneeded {} + || true
+          RUN find /app/node_modules -type f \( -name '*.node' -o -name '*.so' \) -exec sh -c 'strip --strip-unneeded "$1" || true' _ {} \;
           RUN ln -sf /app/openclaw.mjs /usr/local/bin/openclaw && chmod 755 /app/openclaw.mjs
           USER node
           HEALTHCHECK --interval=3m --timeout=10s --start-period=15s --retries=3 \
