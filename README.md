@@ -7,6 +7,8 @@ It only hosts GitHub Actions workflows that check out upstream OpenClaw at build
 
 License: MIT, aligned with upstream OpenClaw.
 
+Notice: The workflows, release-candidate matrix, and repository housekeeping in this repository were prepared with AI assistance. All changes should be reviewed by a human maintainer before production use. If there is any mistake, breakage, or security issue, responsibility should not be implicitly assigned to the repository owner merely because the AI produced the draft.
+
 ## Status
 
 Current release-candidate status is finalized for the main publish tracks.
