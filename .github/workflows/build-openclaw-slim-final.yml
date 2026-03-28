@@ -1,0 +1,119 @@
+name: Build OpenClaw Slim Final
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref from openclaw/openclaw to build
+        required: true
+        default: refs/tags/v2026.3.24
+        type: string
+      image_name:
+        description: GHCR image name under winffychu namespace
+        required: true
+        default: openclaw
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  OWNER: winffychu
+  FINAL_NPM_VERSION: 11.12.1
+  FINAL_HONO_VERSION: 1.19.10
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-24.04
+            image_tag: 2026.3.24-slim-amd64-final-r1
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            image_tag: 2026.3.24-slim-arm64-final-r1
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout upstream OpenClaw
+        uses: actions/checkout@v4
+        with:
+          repository: openclaw/openclaw
+          ref: ${{ inputs.ref }}
+          fetch-depth: 1
+
+      - name: Patch bundled runtime deps and Dockerfile
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          root = Path('.')
+          script = root / 'scripts' / 'stage-bundled-plugin-runtime-deps.mjs'
+          text = script.read_text(encoding='utf-8')
+          needle = '  const packageJson = readJson(manifestPath);\n  let changed = false;\n'
+          insert = '  const packageJson = readJson(manifestPath);\n  let changed = false;\n\n  const nextOverrides = { ...(packageJson.overrides ?? {}) };\n  if (nextOverrides["@hono/node-server"] !== "1.19.10") {\n    nextOverrides["@hono/node-server"] = "1.19.10";\n    packageJson.overrides = nextOverrides;\n    changed = true;\n  }\n'
+          if needle in text and insert not in text:
+              text = text.replace(needle, insert, 1)
+          script.write_text(text, encoding='utf-8')
+
+          dockerfile = root / 'Dockerfile'
+          dtext = dockerfile.read_text(encoding='utf-8')
+          old = '    done && \\\n    chmod -R a+rX "$COREPACK_HOME"\n'
+          new = '    done && \\\n    chmod -R a+rX "$COREPACK_HOME" && \\\n    npm install -g npm@11.12.1\n'
+          if old in dtext and new not in dtext:
+              dtext = dtext.replace(old, new, 1)
+          marker = 'RUN ln -sf /app/openclaw.mjs /usr/local/bin/openclaw \\\n && chmod 755 /app/openclaw.mjs\n'
+          add = 'RUN ln -sf /app/openclaw.mjs /usr/local/bin/openclaw \\\n && chmod 755 /app/openclaw.mjs\nRUN node --version && npm --version && node openclaw.mjs --help >/dev/null\n'
+          if marker in dtext and add not in dtext:
+              dtext = dtext.replace(marker, add, 1)
+          dockerfile.write_text(dtext, encoding='utf-8')
+          PY
+
+      - name: Show source revision
+        run: |
+          git rev-parse HEAD
+          git describe --tags --always || true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Prepare metadata
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          IMAGE="${{ env.REGISTRY }}/${{ env.OWNER }}/${{ inputs.image_name }}"
+          {
+            echo "image=${IMAGE}"
+            echo "revision=$(git rev-parse HEAD)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build and push final slim image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          push: true
+          provenance: false
+          cache-from: type=gha,scope=openclaw-${{ matrix.arch }}-slim-final-r1
+          cache-to: type=gha,mode=max,scope=openclaw-${{ matrix.arch }}-slim-final-r1
+          build-args: |
+            OPENCLAW_VARIANT=slim
+          tags: ${{ steps.meta.outputs.image }}:${{ matrix.image_tag }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/openclaw/openclaw
+            org.opencontainers.image.revision=${{ steps.meta.outputs.revision }}
+            org.opencontainers.image.description=Final slim release-candidate image
